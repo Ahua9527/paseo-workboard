@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -16,29 +16,30 @@ export function QuickCreate({
   t,
   theme,
   groupName,
+  title,
+  error,
+  saving,
+  onChangeTitle,
 }: {
   disabled: boolean;
   onCreate(title: string): Promise<boolean>;
   t: ReturnType<typeof strings>;
   theme: PluginTheme;
   groupName: string;
+  title: string;
+  error: boolean;
+  saving: boolean;
+  onChangeTitle(title: string): void;
 }) {
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState(false);
-  const [saving, setSaving] = useState(false);
   const pending = useRef(false);
   const input = useRef<NativeTextInput>(null);
   const create = async () => {
-    if (disabled || pending.current || !title.trim()) return;
+    if (disabled || saving || pending.current || !title.trim()) return;
     pending.current = true;
-    setSaving(true);
-    setError(false);
     try {
-      if (await onCreate(title.trim())) setTitle("");
-      else setError(true);
+      await onCreate(title.trim());
     } finally {
       pending.current = false;
-      setSaving(false);
       input.current?.focus();
     }
   };
@@ -59,10 +60,7 @@ export function QuickCreate({
           ref={input}
           value={title}
           editable={!disabled && !saving}
-          onChangeText={(value) => {
-            setTitle(value);
-            setError(false);
-          }}
+          onChangeText={onChangeTitle}
           maxLength={1000}
           accessibilityLabel={`${groupName}: ${t.quickCreate}`}
           accessibilityHint={t.quickCreateHint}

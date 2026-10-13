@@ -143,6 +143,9 @@ import {
   ArchivePage,
 } from "../client/WorkboardScreen";
 import { BoardView } from "../client/BoardView";
+import { ListView } from "../client/ListView";
+import { QuickCreate } from "../client/QuickCreate";
+import { useDragHandle } from "../client/drag-handle";
 import { ConfirmationModal } from "../client/ConfirmationModal";
 import { Text } from "react-native";
 import { HintProvider, HintButton } from "../client/Hint";
@@ -252,6 +255,14 @@ function host(initialPage = "board", navigation?: any) {
   const element = WorkboardScreen(props).props.children;
   return mount(element.type, element.props);
 }
+function hostFor(id: string) {
+  const element = WorkboardScreen({
+    host: { id },
+    theme,
+    layout: { compact: false },
+  } as any).props.children;
+  return mount(element.type, element.props);
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;
@@ -283,6 +294,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const frame of frames.splice(0))
     for (const slot of frame.slots) slot?.cleanup?.();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -1517,6 +1529,56 @@ it("F08 desktop same-column drag uses vertical midpoints and preserves hidden ne
   );
   expect(test.props.onStage).not.toHaveBeenCalled();
 });
+it("F08 desktop drag remains active when its preview disables the rendered source handle", () => {
+  const test = orderScene();
+  let shellElement = find(
+    test.view.render(),
+    (element) =>
+      typeof element.type === "function" &&
+      element.type.name === "TaskDragShell" &&
+      element.props.card.id === "a",
+  );
+  const shell = mount(shellElement.type, shellElement.props);
+  let rendered = shell.render();
+  byID(rendered, "workboard-card-a").props.ref.current = {
+    measureInWindow: (callback: any) => callback(0, 20, 246, 80),
+  };
+  let handle = byID(rendered, "workboard-drag-a");
+  handle.props.onStartShouldSetPanResponderCapture({
+    nativeEvent: { pageX: 100, pageY: 50 },
+  });
+  handle.props.onPanResponderGrant({}, { moveX: 100, moveY: 50, dx: 0, dy: 0 });
+  handle.props.onPanResponderMove(
+    {},
+    { moveX: 100, moveY: 220, dx: 0, dy: 170 },
+  );
+
+  shellElement = find(
+    test.view.render(),
+    (element) =>
+      typeof element.type === "function" &&
+      element.type.name === "TaskDragShell" &&
+      element.props.card.id === "a",
+  );
+  expect(shellElement.props.disabled).toBe(true);
+  shell.props = shellElement.props;
+  rendered = shell.render();
+  handle = byID(rendered, "workboard-drag-a");
+  handle.props.onPanResponderMove(
+    {},
+    { moveX: 100, moveY: 220, dx: 0, dy: 170 },
+  );
+  handle.props.onPanResponderRelease(
+    {},
+    { moveX: 100, moveY: 220, dx: 0, dy: 170 },
+  );
+
+  expect(test.props.onReorderCards).toHaveBeenCalledWith(
+    test.props.cards[0],
+    ["a", "b", "c", "d"],
+    ["b", "c", "a", "d"],
+  );
+});
 it("F08 cancels a same-column gesture when filters change", () => {
   const test = orderScene();
   const shell = find(
@@ -1855,4 +1917,936 @@ it("F05-R01 submits the second working group from StartModal to the real Workboa
   } finally {
     test.board.dispose();
   }
+});
+
+function viewStorage() {
+  const values = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  });
+  return values;
+}
+
+it("L01 switches layout without changing filtered cards or saved order, and isolates the host preference", () => {
+  const storage = viewStorage();
+  runtime.query.data = {
+    ...board([card("one"), card("two")]),
+    cardOrderByStage: { todo: ["two", "one"] },
+  };
+  runtime.filters = { ...DEFAULT_FILTERS, search: "one" };
+  const screen = hostFor("alpha");
+  const boardView = named(screen.render(), "BoardView");
+  expect(boardView.props.cards.map((item: Card) => item.id)).toEqual(["one"]);
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  const listView = named(screen.render(), "ListView");
+  expect(listView.props.cards.map((item: Card) => item.id)).toEqual(["one"]);
+  expect(listView.props.cardOrderByStage).toEqual({ todo: ["two", "one"] });
+  expect(
+    listView.props.renderCard(listView.props.cards[0], false).props
+      .presentation,
+  ).toBe("row");
+  listView.props.onCollapsedChange(["todo"]);
+  expect(named(screen.render(), "ListView").props.collapsed.has("todo")).toBe(
+    true,
+  );
+  byID(screen.render(), "workboard-view-board").props.onPress();
+  expect(
+    named(screen.render(), "BoardView").props.cards.map(
+      (item: Card) => item.id,
+    ),
+  ).toEqual(["one"]);
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  expect(named(screen.render(), "ListView").props.collapsed.has("todo")).toBe(
+    true,
+  );
+  expect(JSON.parse(storage.get("paseo-workboard:view:alpha")!)).toEqual({
+    mode: "list",
+    collapsedListGroups: ["todo"],
+  });
+  expect(named(hostFor("beta").render(), "BoardView")).toBeDefined();
+  expect(named(hostFor("alpha").render(), "ListView")).toBeDefined();
+});
+
+it("L02 keeps quick-create text and failure across view and collapse, clears only after success, and blocks duplicate submit", async () => {
+  viewStorage();
+  const screen = host();
+  const group = runtime.query.data.settings.groups.find(
+    (item: any) => item.id === "todo",
+  );
+  const quick = () =>
+    named(screen.render(), "BoardView").props.renderQuickCreate(group);
+  quick().props.onChangeTitle("draft title");
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  let list = named(screen.render(), "ListView");
+  expect(list.props.renderQuickCreate(group).props.title).toBe("draft title");
+  list.props.onCollapsedChange(["todo"]);
+  expect(
+    named(screen.render(), "ListView").props.renderQuickCreate(group).props
+      .title,
+  ).toBe("draft title");
+  const pending = deferred<Board>();
+  runtime.mutation.mockReturnValueOnce(pending.promise);
+  const control = mount(QuickCreate, list.props.renderQuickCreate(group).props);
+  const button = byLabel(control.render(), `${t.create}: ${t.stages.todo}`);
+  button.props.onPress();
+  button.props.onPress();
+  expect(runtime.mutation).toHaveBeenCalledTimes(1);
+  expect(
+    named(screen.render(), "ListView").props.renderQuickCreate(group).props
+      .saving,
+  ).toBe(true);
+  pending.reject(new Error("write failed"));
+  await vi.waitFor(() =>
+    expect(
+      named(screen.render(), "ListView").props.renderQuickCreate(group).props
+        .error,
+    ).toBe(true),
+  );
+  expect(
+    named(screen.render(), "ListView").props.renderQuickCreate(group).props
+      .title,
+  ).toBe("draft title");
+  expect(
+    named(screen.render(), "ListView").props.quickCreateErrors.has("todo"),
+  ).toBe(true);
+  const saved = {
+    ...runtime.query.data,
+    revision: 2,
+    cards: [...runtime.query.data.cards, card("new")],
+  };
+  runtime.mutation.mockResolvedValueOnce(saved);
+  await named(screen.render(), "ListView")
+    .props.renderQuickCreate(group)
+    .props.onCreate("draft title");
+  expect(
+    named(screen.render(), "ListView").props.renderQuickCreate(group).props
+      .title,
+  ).toBe("");
+  expect(
+    named(screen.render(), "ListView").props.quickCreateErrors.has("todo"),
+  ).toBe(false);
+});
+
+function listScene(overrides: Record<string, unknown> = {}) {
+  const props = {
+    ...columns().props,
+    cards: [card("a"), card("c")],
+    fullCards: [card("a"), card("b"), card("c"), card("d")],
+    cardOrderByStage: { todo: ["a", "b", "c", "d"] },
+    collapsed: new Set<string>(),
+    onCollapsedChange: vi.fn(),
+    renderCard: () => null,
+    ...overrides,
+  } as any;
+  const view = mount(ListView, props);
+  const tree = view.render();
+  const viewport = find(
+    tree,
+    (e) =>
+      !!e.props.ref &&
+      !!e.props.onLayout &&
+      flattenStyle(e.props.style).overflow === "hidden",
+  );
+  viewport.props.ref.current = {
+    measureInWindow: (fn: any) => fn(0, 0, 500, props.groups.length * 240),
+  };
+  viewport.props.onLayout({});
+  const scroll = find(tree, (e) => !!e.props.onContentSizeChange);
+  scroll.props.ref.current = { scrollTo: vi.fn() };
+  scroll.props.onContentSizeChange(500, props.groups.length * 220);
+  props.groups.forEach((group: any, index: number) => {
+    const component = find(
+      tree,
+      (e) =>
+        typeof e.type === "function" &&
+        e.type.name === "ListGroup" &&
+        e.props.group.id === group.id,
+    );
+    component.props.onLayout(index * 220, 200);
+    component.props.onBodyLayout(46);
+    elements(component)
+      .filter((e) => typeof e.type === "function" && e.type.name === "ListTask")
+      .forEach((task, row) => task.props.onLayout(row * 60, 50));
+  });
+  return { props, view, tree, scroll, viewport };
+}
+
+function listTask(tree: ReactNode, id: string) {
+  return find(
+    tree,
+    (e) =>
+      typeof e.type === "function" &&
+      e.type.name === "ListTask" &&
+      e.props.card.id === id,
+  );
+}
+function listGroup(tree: ReactNode, id: string) {
+  return find(
+    tree,
+    (e) =>
+      typeof e.type === "function" &&
+      e.type.name === "ListGroup" &&
+      e.props.group.id === id,
+  );
+}
+
+it("L03 list task drag preserves hidden neighbors with full-order CAS, while cross-group drop only changes stage", () => {
+  const test = listScene();
+  const todoIndex = test.props.groups.findIndex(
+    (group: any) => group.id === "todo",
+  );
+  const sourceY = todoIndex * 220 + 70;
+  const source = listTask(test.tree, "a");
+  source.props.onBegin(
+    { left: 0, top: sourceY - 25, width: 500, height: 50 },
+    100,
+    sourceY,
+  );
+  source.props.onMove(100, todoIndex * 220 + 46 + 120);
+  vi.advanceTimersByTime(16);
+  source.props.onEnd(100, todoIndex * 220 + 46 + 120);
+  expect(test.props.onReorderCards).toHaveBeenCalledWith(
+    test.props.cards[0],
+    ["a", "b", "c", "d"],
+    ["b", "c", "a", "d"],
+  );
+  expect(test.props.onStage).not.toHaveBeenCalled();
+
+  const reviewIndex = test.props.groups.findIndex(
+    (group: any) => group.id === "review",
+  );
+  source.props.onBegin(
+    { left: 0, top: sourceY - 25, width: 500, height: 50 },
+    100,
+    sourceY,
+  );
+  source.props.onEnd(100, reviewIndex * 220 + 20);
+  expect(test.props.onStage).toHaveBeenCalledWith(
+    test.props.cards[0],
+    "review",
+  );
+  expect(test.props.onReorderCards).toHaveBeenCalledTimes(1);
+});
+
+it("L04 list accepts a collapsed or empty target, reorders groups, and exposes keyboard and button alternatives", () => {
+  const test = listScene();
+  const groups = test.props.groups.map((group: any) => group.id);
+  const source = listTask(test.tree, "a");
+  const emptyIndex = groups.findIndex((id: string) => id === "review");
+  test.props.collapsed = new Set(["review"]);
+  test.view.render();
+  source.props.onBegin({ left: 0, top: 0, width: 500, height: 50 }, 100, 100);
+  source.props.onEnd(100, emptyIndex * 220 + 20);
+  expect(test.props.onStage).toHaveBeenCalledWith(
+    test.props.cards[0],
+    "review",
+  );
+
+  const first = listGroup(test.tree, groups[0]);
+  first.props.onBegin({ left: 0, top: 0, width: 500, height: 46 }, 100, 20);
+  first.props.onEnd(100, (groups.length - 1) * 220 + 180);
+  expect(test.props.onReorder).toHaveBeenCalledWith(
+    [...groups.slice(1), groups[0]],
+    groups,
+  );
+
+  const rendered = mount(source.type, source.props).render();
+  const handle = byID(rendered, "workboard-list-task-drag-a");
+  const event = {
+    key: "ArrowDown",
+    altKey: false,
+    preventDefault: vi.fn(),
+    stopPropagation: vi.fn(),
+  };
+  handle.props.onKeyDown(event);
+  expect(test.props.onReorderCards).not.toHaveBeenCalled();
+  handle.props.onKeyDown({ ...event, altKey: true });
+  expect(test.props.onReorderCards).toHaveBeenCalledWith(
+    test.props.cards[0],
+    ["a", "b", "c", "d"],
+    ["b", "c", "a", "d"],
+  );
+  test.props.onReorderCards.mockClear();
+  byLabel(rendered, `${t.moveCardDown}: a`).props.onPress();
+  expect(test.props.onReorderCards).toHaveBeenCalledOnce();
+
+  test.props.onReorder.mockClear();
+  const renderedGroup = mount(first.type, first.props).render();
+  const groupHandle = byID(
+    renderedGroup,
+    `workboard-list-group-drag-${groups[0]}`,
+  );
+  groupHandle.props.onKeyDown({
+    key: "ArrowDown",
+    altKey: true,
+    preventDefault: vi.fn(),
+    stopPropagation: vi.fn(),
+  });
+  expect(test.props.onReorder).toHaveBeenCalledWith(
+    [groups[1], groups[0], ...groups.slice(2)],
+    groups,
+  );
+  const all = find(
+    test.view.render(),
+    (e) => !!e.props.onPress && text(e) === t.collapseAll,
+  );
+  all.props.onPress();
+  expect(test.props.onCollapsedChange).toHaveBeenCalledWith(groups);
+});
+
+it("L04 rebuilds group positions after collapse moves siblings without position-only layout events", () => {
+  const inboxCard = card("a", "inbox");
+  const test = listScene({
+    cards: [inboxCard],
+    fullCards: [inboxCard],
+    cardOrderByStage: { inbox: ["a"] },
+  });
+  const ids = test.props.groups.map((group: any) => group.id);
+
+  test.props.collapsed = new Set(ids);
+  let tree = test.view.render();
+  ids.forEach((id: string, index: number) =>
+    listGroup(tree, id).props.onLayout(index * 60, 50),
+  );
+
+  test.props.collapsed = new Set(ids.filter((id: string) => id !== "inbox"));
+  tree = test.view.render();
+  listGroup(tree, "inbox").props.onLayout(0, 200);
+
+  const source = listTask(tree, "a");
+  source.props.onBegin({ left: 0, top: 46, width: 500, height: 50 }, 100, 70);
+  source.props.onEnd(100, 350);
+
+  expect(test.props.onStage).toHaveBeenCalledWith(inboxCard, "review");
+});
+
+it("L04 rebuilds row positions after reorder moves siblings without position-only layout events", () => {
+  const a = card("a"),
+    c = card("c"),
+    e = card("e");
+  const test = listScene({
+    cards: [a, c, e],
+    fullCards: [a, c, e],
+    cardOrderByStage: { todo: ["a", "c", "e"] },
+  });
+  const todoTop =
+    test.props.groups.findIndex((group: any) => group.id === "todo") * 220;
+
+  test.props.cards = [e, a, c];
+  test.props.cardOrderByStage = { todo: ["e", "a", "c"] };
+  const tree = test.view.render();
+  const source = listTask(tree, "e");
+  source.props.onBegin(
+    { left: 0, top: todoTop + 46, width: 500, height: 50 },
+    100,
+    todoTop + 70,
+  );
+  source.props.onEnd(100, todoTop + 46 + 100);
+
+  expect(test.props.onReorderCards).toHaveBeenCalledWith(
+    e,
+    ["e", "a", "c"],
+    ["a", "e", "c"],
+  );
+});
+
+it("L05 list uses scroll-content coordinates, auto-scrolls at the edge, and cancels after filter or pending changes", () => {
+  const test = listScene();
+  const index = test.props.groups.findIndex(
+    (group: any) => group.id === "todo",
+  );
+  const source = listTask(test.tree, "a");
+  test.scroll.props.onScroll({ nativeEvent: { contentOffset: { y: 100 } } });
+  source.props.onBegin(
+    { left: 0, top: index * 220 - 100 + 46, width: 500, height: 50 },
+    100,
+    index * 220 - 100 + 70,
+  );
+  source.props.onEnd(100, index * 220 - 100 + 46 + 120);
+  expect(test.props.onReorderCards).toHaveBeenCalledWith(
+    test.props.cards[0],
+    ["a", "b", "c", "d"],
+    ["b", "c", "a", "d"],
+  );
+  test.props.onReorderCards.mockClear();
+
+  test.viewport.props.ref.current = {
+    measureInWindow: (fn: any) => fn(0, 0, 500, 300),
+  };
+  test.viewport.props.onLayout({});
+  test.scroll.props.onContentSizeChange(500, 5000);
+  source.props.onBegin({ left: 0, top: 50, width: 500, height: 50 }, 100, 70);
+  source.props.onMove(100, 290);
+  vi.advanceTimersByTime(16);
+  expect(test.scroll.props.ref.current.scrollTo).toHaveBeenCalledWith({
+    y: expect.any(Number),
+    animated: false,
+  });
+  test.props.filterKey = "changed";
+  test.view.render();
+  source.props.onEnd(100, 290);
+  expect(test.props.onReorderCards).not.toHaveBeenCalled();
+  expect(test.props.onStage).not.toHaveBeenCalled();
+
+  test.props.filterKey = "initial";
+  test.view.render();
+  source.props.onBegin({ left: 0, top: 50, width: 500, height: 50 }, 100, 70);
+  test.props.pendingStages = new Set(["a"]);
+  test.view.render();
+  source.props.onEnd(100, 190);
+  expect(test.props.onStage).not.toHaveBeenCalled();
+});
+
+it("L05 list invalidates a pending drag measurement when compact layout changes", () => {
+  const test = listScene();
+  const groupIndex = test.props.groups.findIndex(
+    (group: any) => group.id === "todo",
+  );
+  const sourceY = groupIndex * 220 + 70;
+  let measured:
+    | ((left: number, top: number, width: number, height: number) => void)
+    | undefined;
+  let taskElement = listTask(test.view.render(), "a");
+  const task = mount(taskElement.type, taskElement.props);
+  let rendered = task.render();
+  byID(rendered, "workboard-list-task-a").props.ref.current = {
+    measureInWindow: (callback: typeof measured) => {
+      measured = callback;
+    },
+  };
+  let handle = byID(rendered, "workboard-list-task-drag-a");
+  handle.props.onStartShouldSetPanResponderCapture({
+    nativeEvent: { pageX: 100, pageY: sourceY },
+  });
+  handle.props.onPanResponderGrant(
+    {},
+    { moveX: 100, moveY: sourceY, dx: 0, dy: 0 },
+  );
+  handle.props.onPanResponderMove(
+    {},
+    { moveX: 100, moveY: sourceY + 120, dx: 0, dy: 120 },
+  );
+  expect(measured).toBeTypeOf("function");
+
+  test.props.compact = true;
+  taskElement = listTask(test.view.render(), "a");
+  task.props = taskElement.props;
+  rendered = task.render();
+  measured!(0, sourceY - 25, 500, 50);
+  handle = byID(rendered, "workboard-list-task-drag-a");
+  handle.props.onPanResponderRelease(
+    {},
+    { moveX: 100, moveY: sourceY + 120, dx: 0, dy: 120 },
+  );
+
+  expect(test.props.onReorderCards).not.toHaveBeenCalled();
+  expect(test.props.onStage).not.toHaveBeenCalled();
+});
+
+it("L05 list drag remains active when its preview disables the rendered source handle", () => {
+  const test = listScene();
+  const groupIndex = test.props.groups.findIndex(
+    (group: any) => group.id === "todo",
+  );
+  const sourceY = groupIndex * 220 + 70;
+  const targetY = groupIndex * 220 + 46 + 120;
+  let taskElement = listTask(test.view.render(), "a");
+  const task = mount(taskElement.type, taskElement.props);
+  let rendered = task.render();
+  byID(rendered, "workboard-list-task-a").props.ref.current = {
+    measureInWindow: (callback: any) => callback(0, sourceY - 25, 500, 50),
+  };
+  let handle = byID(rendered, "workboard-list-task-drag-a");
+  handle.props.onStartShouldSetPanResponderCapture({
+    nativeEvent: { pageX: 100, pageY: sourceY },
+  });
+  handle.props.onPanResponderGrant(
+    {},
+    { moveX: 100, moveY: sourceY, dx: 0, dy: 0 },
+  );
+  handle.props.onPanResponderMove(
+    {},
+    { moveX: 100, moveY: targetY, dx: 0, dy: targetY - sourceY },
+  );
+
+  taskElement = listTask(test.view.render(), "a");
+  expect(taskElement.props.disabled).toBe(true);
+  task.props = taskElement.props;
+  rendered = task.render();
+  handle = byID(rendered, "workboard-list-task-drag-a");
+  handle.props.onPanResponderMove(
+    {},
+    { moveX: 100, moveY: targetY, dx: 0, dy: targetY - sourceY },
+  );
+  handle.props.onPanResponderRelease(
+    {},
+    { moveX: 100, moveY: targetY, dx: 0, dy: targetY - sourceY },
+  );
+
+  expect(test.props.onReorderCards).toHaveBeenCalledWith(
+    test.props.cards[0],
+    ["a", "b", "c", "d"],
+    ["b", "c", "a", "d"],
+  );
+  expect(test.props.onStage).not.toHaveBeenCalled();
+});
+
+it("L06 row keeps details and actions independent while surfacing critical status with details closed", () => {
+  const request = {
+    forge: "gitlab",
+    number: 42,
+    url: "https://example.com/mr/42",
+    title: "Fix sync",
+    state: "open",
+    checksStatus: "failure",
+    reviewDecision: "changes_requested",
+  };
+  const value = {
+    ...card("one", "done", "w"),
+    description: "Description visible after expansion",
+    issue: "git-dirty",
+    changeRequest: request,
+    changeRequestUnavailable: true,
+    dueAt: "2026-01-01T00:00:00Z",
+  } as Card;
+  const onOpen = vi.fn(),
+    onEdit = vi.fn(),
+    onStatus = vi.fn();
+  const row = taskComponent(value, {
+    presentation: "row",
+    onOpen,
+    onEdit,
+    onStatus,
+  });
+  let tree = row.render();
+  expect(byLabel(tree, `${t.openWorkspace}: one`).props.onPress).toBe(onOpen);
+  expect(byLabel(tree, t.checks.failure)).toBeDefined();
+  expect(byLabel(tree, t.reviews.changes_requested)).toBeDefined();
+  expect(text(tree)).toContain(t.changeRequestUnavailable);
+  expect(text(tree)).toContain(t.overdue);
+  expect(text(tree)).toContain(t.issues["git-dirty"]);
+  expect(text(tree)).not.toContain("Description visible after expansion");
+  expect(
+    find(
+      tree,
+      (e) => e.props.title === t.moreActions && e.props.open === false,
+    ),
+  ).toBeDefined();
+  byLabel(tree, t.moreActions).props.onPress();
+  tree = row.render();
+  expect(
+    find(tree, (e) => e.props.title === t.moreActions && e.props.open === true),
+  ).toBeDefined();
+  byLabel(tree, t.notes).props.onPress();
+  expect(onEdit).toHaveBeenCalledOnce();
+  expect(
+    byLabel(row.render(), t.details).props.accessibilityState.expanded,
+  ).toBe(false);
+  byLabel(row.render(), t.details).props.onPress();
+  expect(
+    byLabel(row.render(), t.hideDetails).props.accessibilityState.expanded,
+  ).toBe(true);
+  expect(text(row.render())).toContain("Description visible after expansion");
+  expect(onStatus).not.toHaveBeenCalled();
+
+  const blocked = taskComponent(
+    {
+      ...value,
+      binding: {
+        operationId: "pending",
+        workspaceId: null,
+        stage: "done",
+        target: {
+          kind: "new",
+          source: { kind: "directory", path: "/fixture/retry" },
+        },
+      },
+    } as Card,
+    { presentation: "row", pending: true },
+  ).render();
+  expect(byLabel(blocked, t.status).props.disabled).toBe(true);
+  expect(byLabel(blocked, t.retry)).toBeDefined();
+});
+
+it("L06 compact row keeps request warnings singular and activity metadata on one truncatable line", () => {
+  const value = {
+    ...card("one", "review", "w"),
+    changeRequest: {
+      forge: "gitlab",
+      number: 42,
+      url: "https://example.com/mr/42",
+      title: "Fix sync",
+      state: "open",
+      checksStatus: "failure",
+      reviewDecision: "changes_requested",
+    },
+    changeRequestUnavailable: true,
+    conversationDisplayEvidence: "unknown",
+  } as Card;
+  const row = taskComponent(value, { presentation: "row", compact: true });
+  let tree = row.render();
+  const warningCount = () =>
+    elements(tree).filter(
+      (element) =>
+        element.type === Text && text(element) === t.changeRequestUnavailable,
+    ).length;
+  expect(warningCount()).toBe(1);
+
+  const activity = find(tree, (element) => {
+    const style = flattenStyle(element.props.style);
+    return (
+      style.flexDirection === "row" &&
+      style.gap === 4 &&
+      elements(element).some((child) => child.props.name === "MessageCircle")
+    );
+  });
+  expect(flattenStyle(activity.props.style).flexWrap).toBe("nowrap");
+  const time = find(
+    activity,
+    (element) =>
+      element.type === Text && text(element) === t.unknownConversation,
+  );
+  expect(flattenStyle(time.props.style)).toMatchObject({
+    flexShrink: 1,
+    minWidth: 0,
+  });
+
+  byLabel(tree, t.details).props.onPress();
+  tree = row.render();
+  expect(byLabel(tree, t.checks.failure)).toBeDefined();
+  expect(byLabel(tree, t.reviews.changes_requested)).toBeDefined();
+  expect(warningCount()).toBe(1);
+});
+
+it("L07 latest move feedback survives filtering and collapse, then undoes the newest move without reviving an older one", async () => {
+  viewStorage();
+  runtime.query.data = board([
+    card("one", "review", "w1"),
+    card("two", "review", "w2"),
+  ]);
+  const screen = host();
+  const first = named(screen.render(), "BoardView");
+  const moveResult = (id: string) => ({
+    ...runtime.query.data,
+    revision: runtime.query.data.revision + 1,
+    cards: runtime.query.data.cards.map((item: Card) =>
+      item.id === id
+        ? {
+            ...item,
+            stage: "in-progress",
+            labels: ["task:in-progress"],
+            managedLabels: ["task:in-progress"],
+            updatedAt: new Date().toISOString(),
+          }
+        : item,
+    ),
+  });
+  runtime.mutation.mockImplementationOnce(() =>
+    Promise.resolve(moveResult("one")),
+  );
+  await first.props.onStage(first.props.cards[0], "in-progress");
+  vi.advanceTimersByTime(4000);
+  const second = named(screen.render(), "BoardView");
+  runtime.mutation.mockImplementationOnce(() =>
+    Promise.resolve(moveResult("two")),
+  );
+  await second.props.onStage(
+    second.props.cards.find((item: Card) => item.id === "two"),
+    "in-progress",
+  );
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  const list = named(screen.render(), "ListView");
+  list.props.onCollapsedChange(["in-progress"]);
+  runtime.filters = { ...DEFAULT_FILTERS, search: "one" };
+  // The screen's search handler changes the same state as a user typing in the toolbar.
+  find(
+    screen.render(),
+    (e) => e.props.placeholder === t.search,
+  ).props.onChangeText("one");
+  expect(text(byID(screen.render(), "workboard-move-feedback"))).toContain(
+    "two",
+  );
+  runtime.mutation.mockResolvedValueOnce({
+    ...runtime.query.data,
+    revision: runtime.query.data.revision + 1,
+  });
+  byID(screen.render(), "workboard-move-feedback-undo").props.onPress();
+  await vi.waitFor(() =>
+    expect(() => byID(screen.render(), "workboard-move-feedback")).toThrow(),
+  );
+  expect(runtime.mutation).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      action: "stage",
+      taskId: "two",
+      stage: "review",
+    }),
+  );
+});
+
+it("L08 move feedback disappears at eight seconds even when its task is hidden", async () => {
+  viewStorage();
+  runtime.query.data = board([card("one", "review", "w")]);
+  const screen = host();
+  const view = named(screen.render(), "BoardView");
+  runtime.mutation.mockResolvedValueOnce({
+    ...runtime.query.data,
+    revision: 2,
+    cards: [
+      {
+        ...runtime.query.data.cards[0],
+        stage: "in-progress",
+        labels: ["task:in-progress"],
+        managedLabels: ["task:in-progress"],
+      },
+    ],
+  });
+  await view.props.onStage(view.props.cards[0], "in-progress");
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  named(screen.render(), "ListView").props.onCollapsedChange(["in-progress"]);
+  find(
+    screen.render(),
+    (e) => e.props.placeholder === t.search,
+  ).props.onChangeText("missing");
+  vi.advanceTimersByTime(7999);
+  expect(byID(screen.render(), "workboard-move-feedback-undo")).toBeDefined();
+  vi.advanceTimersByTime(1);
+  expect(() => byID(screen.render(), "workboard-move-feedback")).toThrow();
+});
+
+it("L09 a list reorder is immediately reflected by the board view through the shared mutation", async () => {
+  viewStorage();
+  runtime.query.data = board([card("a"), card("b"), card("c")]);
+  const screen = host();
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  const list = named(screen.render(), "ListView");
+  runtime.mutation.mockResolvedValueOnce({
+    ...runtime.query.data,
+    revision: 2,
+    cardOrderByStage: { todo: ["b", "c", "a"] },
+  });
+  await list.props.onReorderCards(
+    list.props.cards[0],
+    ["a", "b", "c"],
+    ["b", "c", "a"],
+  );
+  byID(screen.render(), "workboard-view-board").props.onPress();
+  expect(
+    named(screen.render(), "BoardView").props.cardOrderByStage.todo,
+  ).toEqual(["b", "c", "a"]);
+  expect(runtime.mutation).toHaveBeenCalledWith({
+    action: "reorder-cards",
+    taskId: "a",
+    stage: "todo",
+    expectedOrder: ["a", "b", "c"],
+    cardOrder: ["b", "c", "a"],
+  });
+});
+
+it("L10 filtered list always shows matching and total counts, including zero, and exposes collapsed create failure", () => {
+  const test = listScene();
+  test.props.hasActiveFilter = true;
+  test.props.quickCreateErrors = new Set(["todo"]);
+  test.props.collapsed = new Set(["todo"]);
+  const tree = test.view.render();
+  const todo = listGroup(tree, "todo");
+  const rendered = mount(todo.type, todo.props).render();
+  expect(text(rendered)).toContain("2 / 4");
+  expect(byLabel(rendered, t.quickCreateFailed)).toBeDefined();
+  const empty = listGroup(tree, "review");
+  expect(text(mount(empty.type, empty.props).render())).toContain("0 / 0");
+});
+
+it("L11 list disables edge move buttons and announces only confirmed task reorders", async () => {
+  const test = listScene();
+  const first = mount(
+    listTask(test.tree, "a").type,
+    listTask(test.tree, "a").props,
+  ).render();
+  const last = mount(
+    listTask(test.tree, "c").type,
+    listTask(test.tree, "c").props,
+  ).render();
+  expect(byLabel(first, `${t.moveCardUp}: a`).props.disabled).toBe(true);
+  expect(byLabel(first, `${t.moveCardDown}: a`).props.disabled).toBe(false);
+  expect(byLabel(last, `${t.moveCardDown}: c`).props.disabled).toBe(true);
+
+  const pending = deferred<boolean>();
+  test.props.onReorderCards
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValueOnce(true);
+  test.view.render();
+  byLabel(first, `${t.moveCardDown}: a`).props.onPress();
+  const announcement = () =>
+    find(
+      test.view.render(),
+      (e) => e.props.accessibilityLiveRegion === "polite",
+    );
+  expect(text(announcement())).toBe("");
+  pending.resolve(false);
+  await vi.waitFor(() =>
+    expect(test.props.onReorderCards).toHaveBeenCalledTimes(1),
+  );
+  expect(text(announcement())).toBe("");
+  byLabel(first, `${t.moveCardDown}: a`).props.onPress();
+  await vi.waitFor(() => expect(text(announcement())).toContain("a"));
+  expect(text(announcement())).toBe(t.taskOrderSaved.replace("{task}", "a"));
+});
+
+it("L12 a pending stage mutation completes after switching views without losing its state", async () => {
+  viewStorage();
+  runtime.query.data = board([card("one", "review", "w")]);
+  const pending = deferred<Board>();
+  runtime.mutation.mockReturnValueOnce(pending.promise);
+  const screen = host();
+  const boardView = named(screen.render(), "BoardView");
+  const writing = boardView.props.onStage(
+    boardView.props.cards[0],
+    "in-progress",
+  );
+  byID(screen.render(), "workboard-view-list").props.onPress();
+  const list = named(screen.render(), "ListView");
+  expect(list.props.pendingStages.has("one")).toBe(true);
+  pending.resolve({
+    ...runtime.query.data,
+    revision: 2,
+    cards: [
+      {
+        ...runtime.query.data.cards[0],
+        stage: "in-progress",
+        labels: ["task:in-progress"],
+        managedLabels: ["task:in-progress"],
+      },
+    ],
+  });
+  await writing;
+  expect(named(screen.render(), "ListView").props.cards[0].stage).toBe(
+    "in-progress",
+  );
+  byID(screen.render(), "workboard-view-board").props.onPress();
+  expect(named(screen.render(), "BoardView").props.cards[0].stage).toBe(
+    "in-progress",
+  );
+  expect(runtime.mutation).toHaveBeenCalledTimes(1);
+});
+
+it("L13 an async drag measurement cannot start a gesture after its handle unmounts", () => {
+  let measured:
+    | ((left: number, top: number, width: number, height: number) => void)
+    | undefined;
+  const onBegin = vi.fn(),
+    onMove = vi.fn();
+  const Probe = () =>
+    useDragHandle({
+      measure: {
+        current: {
+          measureInWindow: (callback: typeof measured) => {
+            measured = callback;
+          },
+        },
+      } as any,
+      disabled: false,
+      captureStart: true,
+      onBegin,
+      onMove,
+      onEnd: vi.fn(),
+      onCancel: vi.fn(),
+    });
+  const probe = mount(Probe, {});
+  const handlers = probe.render() as any;
+  handlers.onStartShouldSetPanResponderCapture({
+    nativeEvent: { pageX: 20, pageY: 30 },
+  });
+  handlers.onPanResponderGrant({}, { moveX: 20, moveY: 30, dx: 0, dy: 0 });
+  handlers.onPanResponderMove({}, { moveX: 30, moveY: 30, dx: 10, dy: 0 });
+  expect(measured).toBeTypeOf("function");
+  for (const slot of frames.at(-1)!.slots) slot?.cleanup?.();
+  measured!(0, 0, 200, 50);
+  expect(onBegin).not.toHaveBeenCalled();
+  expect(onMove).not.toHaveBeenCalled();
+});
+
+it("L13 an async drag measurement cannot start after the handle becomes disabled", () => {
+  let measured:
+    | ((left: number, top: number, width: number, height: number) => void)
+    | undefined;
+  const onBegin = vi.fn(),
+    onMove = vi.fn();
+  const Probe = (props: { disabled: boolean }) =>
+    useDragHandle({
+      measure: {
+        current: {
+          measureInWindow: (callback: typeof measured) => {
+            measured = callback;
+          },
+        },
+      } as any,
+      disabled: props.disabled,
+      captureStart: true,
+      onBegin,
+      onMove,
+      onEnd: vi.fn(),
+      onCancel: vi.fn(),
+    });
+  const probe = mount(Probe, { disabled: false });
+  const handlers = probe.render() as any;
+  handlers.onStartShouldSetPanResponderCapture({
+    nativeEvent: { pageX: 20, pageY: 30 },
+  });
+  handlers.onPanResponderGrant({}, { moveX: 20, moveY: 30, dx: 0, dy: 0 });
+  handlers.onPanResponderMove({}, { moveX: 30, moveY: 30, dx: 10, dy: 0 });
+  expect(measured).toBeTypeOf("function");
+
+  probe.props = { disabled: true };
+  probe.render();
+  measured!(0, 0, 200, 50);
+  expect(onBegin).not.toHaveBeenCalled();
+  expect(onMove).not.toHaveBeenCalled();
+});
+
+it("L14 feedback expires from the newest move's own eight-second window without falling back", async () => {
+  viewStorage();
+  runtime.query.data = board([
+    card("one", "review", "w1"),
+    card("two", "review", "w2"),
+  ]);
+  const screen = host();
+  const move = async (id: string) => {
+    const view = named(screen.render(), "BoardView");
+    runtime.mutation.mockImplementationOnce(() =>
+      Promise.resolve({
+        ...runtime.query.data,
+        revision: runtime.query.data.revision + 1,
+        cards: runtime.query.data.cards.map((item: Card) =>
+          item.id === id
+            ? {
+                ...item,
+                stage: "in-progress",
+                labels: ["task:in-progress"],
+                managedLabels: ["task:in-progress"],
+                updatedAt: new Date().toISOString(),
+              }
+            : item,
+        ),
+      }),
+    );
+    await view.props.onStage(
+      view.props.cards.find((item: Card) => item.id === id),
+      "in-progress",
+    );
+  };
+  await move("one");
+  vi.advanceTimersByTime(4000);
+  await move("two");
+  expect(text(byID(screen.render(), "workboard-move-feedback"))).toContain(
+    "two",
+  );
+  vi.advanceTimersByTime(7999);
+  expect(text(byID(screen.render(), "workboard-move-feedback"))).toContain(
+    "two",
+  );
+  vi.advanceTimersByTime(1);
+  expect(() => byID(screen.render(), "workboard-move-feedback")).toThrow();
 });

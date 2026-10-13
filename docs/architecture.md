@@ -2,21 +2,21 @@
 
 [中文](zh-CN/architecture.md) · [README](../README.md)
 
-Workboard is a trusted Paseo plugin with separate client and server entries. The daemon owns task data and automation. Each client renders the selected host's board and keeps only its display preferences locally.
+Workboard is a trusted Paseo plugin with separate client and server entries. The daemon owns task data and automation. Each client renders the selected host's board or grouped list and keeps only its display preferences locally.
 
 ## Modules
 
-| Location                                          | Responsibility                                                               |
-| ------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `index.client.tsx`                                | Sidebar, settings screen, Command Center entry and query provider            |
-| `client/`                                         | Board, forms, filters, drag interactions, themes and translations            |
-| `index.server.ts`                                 | Settings registration, RPC handlers and server lifecycle                     |
-| `server/workboard.ts`                             | Reconciliation, serialized mutations, binding, pinning and archive decisions |
-| `server/host.ts`                                  | Paseo inventory, subscriptions, history and workspace operations             |
-| `server/paseo-compat.ts`                          | Access to host operations missing from the public SDK                        |
-| `server/conversations.ts`, `server/git-safety.ts` | Conversation timestamps and pre-archive checks                               |
-| `server/store.ts`, `shared/migrations.ts`         | Revision-checked persistence and data migration                              |
-| `shared/model.ts`, `shared/rpc.ts`                | Zod models, settings and RPC contracts                                       |
+| Location                                          | Responsibility                                                                   |
+| ------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `index.client.tsx`                                | Sidebar, settings screen, Command Center entry and query provider                |
+| `client/`                                         | Board and list views, forms, filters, drag interactions, themes and translations |
+| `index.server.ts`                                 | Settings registration, RPC handlers and server lifecycle                         |
+| `server/workboard.ts`                             | Reconciliation, serialized mutations, binding, pinning and archive decisions     |
+| `server/host.ts`                                  | Paseo inventory, subscriptions, history and workspace operations                 |
+| `server/paseo-compat.ts`                          | Access to host operations missing from the public SDK                            |
+| `server/conversations.ts`, `server/git-safety.ts` | Conversation timestamps and pre-archive checks                                   |
+| `server/store.ts`, `shared/migrations.ts`         | Revision-checked persistence and data migration                                  |
+| `shared/model.ts`, `shared/rpc.ts`                | Zod models, settings and RPC contracts                                           |
 
 ## Identity and state
 
@@ -32,7 +32,7 @@ Agent activity is a separate projection. A reply finishing never marks a task do
 
 Host settings store schema version 8, including tasks, groups, preferences, binding/archive intents and owned pin timestamps. Version 6 splits the conversation record into display evidence and gate evidence; version 7 adds the archive delay, default destinations and task-level `mergedDrafts` arrays (empty for historical tasks). The store validates data and writes against the host settings revision. Migrations preserve existing records; unsupported or invalid data stops initialization and automatic retries, with a visible board error. Transient connection failures still retry every ten seconds. Data is never silently replaced. Migration from v5 skips historical agent IDs without observation times, and v6→v7 removes existing entries without observation times so real scans can rediscover them. Legacy settings without a Canceled group gain one with an ID and label that do not collide with existing configured groups; existing groups, tasks and order remain. This repair turns automatic archive off, since migration cannot inspect ordinary labels on host workspaces. A persisted `archiveMappingNeedsReview` flag keeps the bilingual explanation visible until archive is re-enabled through the existing due-task confirmation flow. Normal migrations retain the original archive preference. Versions 1–7 follow the existing chain through to v8.
 
-Column card ordering lives in the v8 Data and Board top-level `cardOrderByStage` map, separate from task records and settings. Both client and server use the shared pure sorter. Reorder/reset mutations compare the complete unfiltered projected column inside the server serial queue and Store update; only archived/external records are hidden, while pending/uncertain archives and bindings remain as immovable neighbors. Reordering moves one eligible task, retains every other task's relative order, and writes only the order map. Missing IDs are ignored until they return; a subsequent reorder compacts current membership. Deleting a group clears its key. v7→v8 defaults the map to empty, and older migrations continue through that step.
+Task ordering for both views lives in the v8 Data and Board top-level `cardOrderByStage` map, separate from task records and settings. Both client and server use the shared pure sorter. Reorder/reset mutations compare the complete unfiltered projected column inside the server serial queue and Store update; only archived/external records are hidden, while pending/uncertain archives and bindings remain as immovable neighbors. Reordering moves one eligible task, retains every other task's relative order, and writes only the order map. Missing IDs are ignored until they return; a subsequent reorder compacts current membership. Deleting a group clears its key. v7→v8 defaults the map to empty, and older migrations continue through that step.
 
 One server-side queue serializes mutations and reconciliation. Subscriptions coalesce affected workspace changes, and a 60-second refresh reconciles missed events. Polling clients do not own archive timers. The client uses optimistic stage changes, then confirms or rolls back using the server result.
 
@@ -40,9 +40,9 @@ Group edits and ordering use expected configuration values to reject stale write
 
 Client writes track pending control IDs, rejecting repeat submissions from that control with localized feedback while allowing unrelated requests. The server remains responsible for optimistic concurrency. Mutation responses only replace cached data when their revision is at least as new as the cache. Confirmations retain a visible failure slot on false results or exceptions. Error text maps every static server error and known issue, with a localized generic fallback for dynamic or unknown errors.
 
-Successful cross-group moves share an eight-second card highlight and inline undo window. Undo sends only a reverse `stage` mutation with the successful managed labels as its expectation. Polling card changes or expiry invalidate it; a native label conflict rejects it visibly. It does not change archive paths or bypass gates. Conflict resolution lacks a single previous group and cannot use this reversal; group ordering keeps its existing reverse-by-reordering interaction.
+Successful cross-group moves share an eight-second task highlight and a toolbar feedback bar for the most recent move, available across views and even when the task is filtered out or its group is collapsed. Undo sends only a reverse `stage` mutation with the successful managed labels as its expectation. Polling card changes or expiry invalidate it; a native label conflict rejects it visibly. It does not change archive paths or bypass gates. Conflict resolution lacks a single previous group and cannot use this reversal; group ordering keeps its existing reverse-by-reordering interaction.
 
-Filters update the controlled view immediately and debounce client storage by 300ms, flushing dirty values when leaving. Conflict notices use the same filters and separate counts. Column header reorder requires Alt/Meta arrows, and its action label describes group options; drag instructions are separate hints. Tooltip timers clear on dismissal/unmount. The native settings surface omits board navigation.
+The board and list share one query, filters, task and group order, optimistic state, pending writes, and undo logic. List groups scroll vertically and retain empty groups, matched/total counts, collapsed drop targets, and independent fold state. List drop geometry uses content coordinates and visible task anchors; the server still checks the full unfiltered order. A board drop expands a collapsed target column, while a list drop leaves the target collapsed. Quick-create text and errors are keyed by group above the view switch, so switching or folding cannot discard them; only a successful create clears the text. Switching views does not cancel submitted writes. Filters update the controlled view immediately and debounce client storage by 300ms, flushing dirty values when leaving. Conflict notices use the same filters and separate counts. Board column header reorder requires Alt/Meta arrows; list handles use Alt+Up/Down, with menu up/down actions as an alternative. Unfinished drags cancel on Escape, window blur, view switch, or filter change. The board column action label describes group options; drag instructions are separate hints. Tooltip timers clear on dismissal/unmount. The native settings surface omits board navigation.
 
 ## Draft binding
 
@@ -80,6 +80,6 @@ Client imports use Paseo-provided React, React Native, TanStack Query, Zod and p
 
 Paseo 0.9.1 has no public plugin locale API. `client/paseo-language.ts` reads the Web/Electron app's `@paseo:app-settings` language, with its legacy key as a fallback, without writing host settings. It uses Paseo's system-locale selection rules and translates Chinese or English. While a surface is mounted, storage/focus events and a one-second check observe changes in the same window. Revalidate this private storage contract when upgrading Paseo. Clients without that storage, including native mobile, fall back to English.
 
-Column widths, collapsed columns and filters are stored per host in browser `localStorage`, independently from daemon settings. Storage failures leave the current view usable. These preferences are not synchronized between clients. Native mobile persistence and touch behavior are outside the verified platform coverage.
+View choice defaults to Board, and list collapsed groups start expanded. View choice, separate board/list collapsed groups, board column widths, and filters are stored per host in browser `localStorage`, independently from daemon settings. These client changes add no RPC or data-schema version. Storage failures leave the current view usable. These preferences are not synchronized between clients. Native mobile persistence and touch behavior are outside the verified platform coverage.
 
 See [verification](verification.md) for evidence and [contributing](../CONTRIBUTING.md) for changes to these boundaries.

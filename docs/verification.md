@@ -8,22 +8,31 @@ tested.
 
 ## Verified baseline
 
-On 2026-10-08, the final schema-v8 source was checked on macOS arm64 with
+On 2026-10-13, the dual-view source (still schema v8) was checked on macOS arm64 with
 Node 22.22.2 through `mise`.
 
 ```sh
 mise exec -- npm run check
 ```
 
-This command passed with **356 unit tests in 26 files**. The deterministic suite
+This command passed with **398 unit tests in 28 files**. The deterministic suite
 covers migrations from v1–v7 to v8, persistent column order and reset, complete
 column compare-and-swap, filtered drag anchors, compact reorder controls,
 optimistic failure recovery, archive recovery and evidence, settings safety,
-stage undo races, and independent Start work defaults. Client handler tests use
+stage undo races, and independent Start work defaults. The dual-view tests add
+host-scoped preferences, independent folds, retained quick-create input/errors,
+filtered list anchors and scroll offsets, group/task moves, cancellation and
+delayed-measurement races, shared ordering, row actions, and latest-move expiry.
+Client handler tests use
 primitive and host boundaries; they do not prove actual React focus, rendering,
 or browser layout.
 
 ## Isolated host integration
+
+On 2026-10-13, the dual-view worktree source passed **13/13 isolated integration
+tests in 30.69s** on Paseo **0.11.2** in a fresh marked home. The temporary daemon
+was stopped. This was a source-directory installation, not a published-package
+or rendered-client test; the client-only change adds no RPC or schema migration.
 
 Historically, on 2026-09-28, that source passed **12 isolated integration tests** against
 Paseo 0.10.0-beta.1. The published 0.1.0 source had passed the same suite on
@@ -51,8 +60,40 @@ request.
 
 ## Visual checks
 
-These are historical checks; they do not cover the current design fixes.
-Those changes have deterministic handler and property checks only.
+On 2026-10-13, the new List view was exercised in Chrome against Paseo
+**0.11.2**, using the isolated home `/tmp/workboard-list-g8eWnC`. The daemon's
+bundled web UI was enabled with `features.webUi.enabled`; its root then returned
+HTTP 200 and loaded the plugin. The earlier HTTP 404 was from starting the
+daemon without the web UI enabled. A browser surface also returned
+`net::ERR_BLOCKED_BY_CLIENT` during setup, but that did not describe the final
+daemon or Chrome result.
+
+The rendered checks covered repeated same-group task dragging, moving a task into a
+collapsed group (including an empty group), the eight-second move undo, group dragging with the resulting
+order shared by Board, quick-create text retained across view changes,
+independent List and Board folds, filtered counts and empty-result hints, and `Alt+Down` ordering. The 390px layout was
+checked in Chinese with the light theme and in English with the dark theme.
+
+This real UI pass found that browser `onLayout.y` values could remain stale
+after collapse or reorder. Drag geometry now rebuilds positions from current
+group and row order plus measured heights. Two interaction regressions fail
+against the old implementation and pass with the fix; they cover a group moved
+by collapse and rows moved by reorder without position-only layout events.
+
+To serve the bundled web UI from another isolated local home, enable it and
+restart the selected daemon:
+
+```sh
+paseo daemon config set features.webUi.enabled true --home /path/to/test-home
+paseo daemon restart --home /path/to/test-home
+```
+
+Use `paseo daemon start --home /path/to/test-home` instead when the selected
+daemon is stopped, then open its configured HTTP address in a local browser.
+Long-duration edge autoscroll, `Escape` or blur during an active drag, native
+mobile clients, and Electron remain unverified for the new List view.
+
+The checks below predate the List view and remain as historical Board evidence.
 
 The desktop client was manually checked in light and dark themes. A separate
 390px narrow-screen check covered the responsive board, group navigation and
@@ -67,6 +108,19 @@ reload. The plugin settings page had no language control, and custom group
 names and task titles were preserved.
 
 ## Release package checks
+
+On 2026-10-13, the **0.3.0** candidate passed `check`, `format:check` and
+`check:package`: **398 unit tests** and **37** approved package files,
+**105,807 bytes**. All unpacked files matched the reviewed source byte for byte.
+The unpacked tarball, without development dependencies, was installed into a
+fresh marked Paseo **0.11.2** home and passed **13/13 integration tests in
+31.89s**. Production dependency auditing reported no vulnerabilities; the
+unchanged development dependency tree has outstanding audit findings.
+
+The validated tarball's SHA-256 is
+`d0b29afd2f8ef3f8517622f75a816e727b3da9e2d12d5e8754efc8ead1a85425`.
+These checks establish the release candidate; npm publication, registry
+installation and GitHub Actions results require their own verification.
 
 On 2026-10-08, the 0.2.0 candidate passed `check`, `format:check` and
 `check:package`: 356 unit tests and 32 approved package files, 92,969 bytes.
@@ -94,6 +148,9 @@ Cafe catalog promotion remains separate from npm publication.
 ## Unverified boundaries
 
 - Native iOS and Android behavior has not been exercised.
+- The new List view has not been exercised in Electron.
+- Long-duration edge autoscroll and `Escape` or blur during an active drag have
+  not been exercised in the rendered UI.
 - The Paseo 0.10.0-beta.1 client UI has not been manually checked.
 - A real remote PR/MR merge triggering Paseo's native archive has not been
   exercised.

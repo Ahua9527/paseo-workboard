@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md) · [User guide](docs/user-guide.md) · [中文使用指南](docs/zh-CN/user-guide.md)
 
-Workboard is a Paseo kanban plugin for workspaces and ideas. Each active workspace becomes one task. You can also capture a title-only draft first, then create or attach its workspace when you are ready to start.
+Workboard is a Paseo plugin with board and grouped-list views for workspaces and ideas. Each active workspace becomes one task. You can also capture a title-only draft first, then create or attach its workspace when you are ready to start.
 
 ![Workboard with sample tasks in English](images/workboard-en.png)
 
@@ -14,14 +14,14 @@ Workboard is a Paseo kanban plugin for workspaces and ideas. Each active workspa
 - See Agent activity separately from task status. An Agent finishing does **not** complete a task.
 - Follow Paseo's desktop language for Chinese and English UI text and dates.
 - Review compact PR/MR, CI, and review-decision information supplied by Paseo.
-- Reorder, resize, collapse, color, and locate desktop columns without changing task data. Narrow layouts use a single-group view and status menu.
+- Switch between a board and a grouped list. Both views share tasks, group order, task order, and filters; each remembers its own collapsed groups. The board also supports column width and a single-group narrow layout.
 - Choose independent defaults for new drafts, unlabeled workspace imports, and Start work (an In progress group).
-- Save card order within each column by dragging; use up/down controls or Alt+Up/Down in narrow layouts. Restore activity order from the group menu.
+- Reorder tasks and groups by dragging or keyboard controls. The list shows all groups vertically, including empty and collapsed drop targets; restore activity order from the group menu.
 - Optionally archive eligible completed or canceled workspaces after a configurable delay from their last verified conversation (30 days by default).
 
 ## Compatibility and trust
 
-The minimum Paseo version is declared in `paseo-plugin.json`. Version 0.2.0 has isolated host integration coverage on Paseo 0.11.1; see [verification](docs/verification.md) for tested versions and remaining client checks.
+The minimum Paseo version is declared in `paseo-plugin.json`. The current source has isolated host integration coverage on Paseo 0.11.2; see [verification](docs/verification.md) for tested versions and remaining client checks.
 
 The public plugin SDK does not expose all of Workboard's label and workspace operations. Workboard uses an internal bridge that reuses the host session. The manifest sets the minimum version; bridge responses are checked at runtime. New Paseo versions may require another compatibility update.
 
@@ -49,7 +49,7 @@ Enable plugins in Paseo, then open **Workboard** from the sidebar.
 1. Open Workboard. Existing active workspaces appear as tasks. Workspaces without a managed status label enter **Inbox** without writing a label during import.
 2. Create a draft with a title when you have an idea. It stays in **To do** and has no workspace yet.
 3. Select **Start work** to create a workspace or attach an existing one. Start a conversation from the native workspace when needed.
-4. Move a card between groups with the status menu or, on desktop, its drag handle. Managed labels and task status stay synchronized.
+4. Switch views as needed, then move a task between groups with the status menu or drag handle. Managed labels and task status stay synchronized.
 5. Configure labels, groups, automatic archiving, and optional sidebar pinning in **Settings**.
 
 ## Documentation
@@ -78,7 +78,7 @@ Use the [isolated integration fixture](tests/integration/README.md) for host-lev
 - The manifest sets the minimum Paseo version. The internal bridge may require changes in later releases; see [verification](docs/verification.md) for tested hosts.
 - Automatic archival can stop Agents and terminals and may remove a managed worktree. Incomplete conversation history postpones automatic archival; Workboard cannot restore a native archive or a removed worktree.
 - Native workspace labels, archive, and sidebar pins can change outside Workboard. The host does not expose every atomic operation, so uncertain operations are retained for manual review rather than retried destructively.
-- The native mobile clients are not verified.
+- The List view has been checked in Chrome, including dragging, shared ordering, undo, keyboard ordering, independent folds, and 390px Chinese/light and English/dark layouts. Long-duration edge autoscroll, `Escape` or blur during an active drag, Electron, and native mobile clients remain unverified.
 
 ## License and acknowledgements
 

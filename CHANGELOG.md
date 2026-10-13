@@ -4,6 +4,14 @@
 
 All notable changes are documented here.
 
+## 0.3.0 — 2026-10-13
+
+- Add a grouped List view alongside Board, sharing task data, filters and saved order while remembering the selected view and separate collapse preferences per host.
+- Support task and group dragging, folded and empty drop targets, and keyboard ordering in the list. Tint the whole group with its assigned color in light and dark themes.
+- Keep quick-create text and errors across view changes and collapsed groups, and expose the latest cross-group move undo above both views.
+- Show task activity, PR/MR status, attention reasons and actions in responsive rows using the same behavior as board cards.
+- Rebuild drag targets after layout changes so folding or reordering groups and tasks does not leave stale drop positions.
+
 ## 0.2.0 — 2026-10-08
 
 - Add independent defaults for new drafts, unlabeled workspace imports and Start work, plus a configurable automatic archive delay.

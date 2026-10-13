@@ -1,14 +1,6 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
-  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -54,12 +46,13 @@ import {
 } from "./column-preferences";
 import { HintButton } from "./Hint";
 import { ConfirmationModal } from "./ConfirmationModal";
+import { useDragHandle, type Bounds, type HandleProps } from "./drag-handle";
 
 type Theme = PluginSurfaceProps["theme"];
 const COLLAPSED_COLUMN_WIDTH = 92;
 const COLUMN_GAP = 10;
 const COLUMN_PADDING = 12;
-type Bounds = { left: number; top: number; width: number; height: number };
+
 type Gesture = {
   kind: "card" | "group" | "resize";
   id: string;
@@ -75,7 +68,7 @@ type Gesture = {
   visibleCardIds: string[];
   filterKey?: string;
 };
-type Props = {
+export type BoardViewProps = {
   hostId: string;
   cards: Card[];
   fullCards: Card[];
@@ -106,13 +99,14 @@ type Props = {
   deleteReason(group: Group): string | null;
   hasActiveFilter: boolean;
   renderQuickCreate?(group: Group): ReactNode;
+  quickCreateErrors?: ReadonlySet<string>;
   onClearFilters?(): void;
   onCreateTask?(): void;
   renderCard(card: Card, showDragHandle: boolean): ReactNode;
   groupColor(group: Group): string;
 };
 
-export function BoardView(props: Props) {
+export function BoardView(props: BoardViewProps) {
   const {
     cards,
     groups,
@@ -785,6 +779,7 @@ export function BoardView(props: Props) {
                   color={props.groupColor(group)}
                   width={groupWidth(group.id)}
                   count={stageCards.length}
+                  createError={!!props.quickCreateErrors?.has(group.id)}
                   onListRef={(value) => {
                     listScrollers.current[group.id] = value;
                   }}
@@ -1206,7 +1201,7 @@ function BoardEmpty({
   onCreateTask,
 }: {
   filtered: boolean;
-  t: Props["t"];
+  t: BoardViewProps["t"];
   theme: Theme;
   onClearFilters?: () => void;
   onCreateTask?: () => void;
@@ -1293,78 +1288,6 @@ function MenuAction({
       <Text style={{ color }}>{label}</Text>
     </Pressable>
   );
-}
-
-type HandleProps = {
-  measure: RefObject<View | null>;
-  disabled: boolean;
-  horizontal?: boolean;
-  captureStart?: boolean;
-  onBegin(rect: Bounds, x: number, y: number): void;
-  onMove(x: number, y: number): void;
-  onEnd(x: number, y: number): void;
-  onCancel(): void;
-};
-function useDragHandle(props: HandleProps) {
-  const latest = useRef(props);
-  latest.current = props;
-  const active = useRef(false);
-  const initiated = useRef(false);
-  const origin = useRef({ x: 0, y: 0 });
-  const activate = (gesture: { moveX: number; moveY: number }) => {
-    initiated.current = true;
-    latest.current.measure.current?.measureInWindow(
-      (left, top, width, height) => {
-        if (!active.current) return;
-        latest.current.onBegin(
-          { left, top, width, height },
-          origin.current.x,
-          origin.current.y,
-        );
-        latest.current.onMove(gesture.moveX, gesture.moveY);
-      },
-    );
-  };
-  return useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onStartShouldSetPanResponderCapture: (event) => {
-          origin.current = {
-            x: event.nativeEvent.pageX,
-            y: event.nativeEvent.pageY,
-          };
-          return !!latest.current.captureStart && !latest.current.disabled;
-        },
-        onMoveShouldSetPanResponderCapture: (_, gesture) =>
-          !latest.current.disabled &&
-          (latest.current.horizontal
-            ? Math.abs(gesture.dx) >= 6 &&
-              Math.abs(gesture.dx) >= Math.abs(gesture.dy)
-            : Math.hypot(gesture.dx, gesture.dy) >= 6),
-        onPanResponderGrant: (_, gesture) => {
-          active.current = true;
-          initiated.current = false;
-          if (!latest.current.captureStart) activate(gesture);
-        },
-        onPanResponderMove: (_, gesture) => {
-          if (initiated.current)
-            latest.current.onMove(gesture.moveX, gesture.moveY);
-          else if (Math.hypot(gesture.dx, gesture.dy) >= 6) activate(gesture);
-        },
-        onPanResponderRelease: (_, gesture) => {
-          active.current = false;
-          if (initiated.current)
-            latest.current.onEnd(gesture.moveX, gesture.moveY);
-        },
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderTerminate: () => {
-          active.current = false;
-          latest.current.onCancel();
-        },
-      }),
-    [],
-  ).panHandlers;
 }
 
 function TaskDragShell({
@@ -1465,6 +1388,7 @@ function BoardColumn({
   color,
   width,
   count,
+  createError,
   collapsed,
   disabled,
   active,
@@ -1492,12 +1416,13 @@ function BoardColumn({
   color: string;
   width: number;
   count: number;
+  createError: boolean;
   collapsed: boolean;
   active: boolean;
   moving: boolean;
   insertBefore: boolean;
   insertAfter: boolean;
-  t: Props["t"];
+  t: BoardViewProps["t"];
   theme: Theme;
   children: ReactNode;
   onMenu(): void;
@@ -1621,6 +1546,14 @@ function BoardColumn({
             </Text>
           </Pressable>
         </View>
+        {collapsed && createError && (
+          <Text
+            accessibilityRole="alert"
+            style={{ color: theme.colors.statusWarning, fontSize: 12 }}
+          >
+            {t.quickCreateFailed}
+          </Text>
+        )}
         {!collapsed && (
           <Pressable
             accessibilityRole="button"

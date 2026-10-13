@@ -3,6 +3,24 @@ import type { Group, GroupColor } from "../shared/model";
 export type Language = "zh" | "en";
 
 const zh = {
+  boardView: "看板",
+  listView: "列表",
+  expandAll: "展开全部",
+  collapseAll: "折叠全部",
+  expandGroup: "展开分组",
+  collapseGroup: "折叠分组",
+  moveGroupUp: "向上移动",
+  moveGroupDown: "向下移动",
+  expandToSeeMatches: "展开查看匹配任务",
+  listGroupCount: "{matched} / {total}",
+  groupKeyboardHintList: "拖动调整分组顺序；Alt+上/下方向键调整顺序。",
+  listCardOrderHint:
+    "在本组排序；可用 Alt+上/下方向键。筛选时只移动当前任务，其它任务相对顺序保持。",
+  listDropToReorder: "在本组调整任务顺序",
+  viewSaveFailed: "显示设置已生效，但无法记住。请检查客户端存储权限。",
+  movedToGroup: "“{task}”已移至“{group}”",
+  moreActions: "更多操作",
+  taskOrderSaved: "已保存“{task}”的顺序",
   confirmationFailed: "操作未完成，请刷新后重试。",
   clearSearch: "清除搜索",
   conflictCount: "{count} 个冲突",
@@ -386,6 +404,26 @@ const zh = {
 };
 
 const en: typeof zh = {
+  boardView: "Board",
+  listView: "List",
+  expandAll: "Expand all",
+  collapseAll: "Collapse all",
+  expandGroup: "Expand group",
+  collapseGroup: "Collapse group",
+  moveGroupUp: "Move up",
+  moveGroupDown: "Move down",
+  expandToSeeMatches: "Expand to see matching tasks",
+  listGroupCount: "{matched} / {total}",
+  groupKeyboardHintList:
+    "Drag to reorder groups; Alt+Up/Down Arrow also reorders.",
+  listCardOrderHint:
+    "Reorder in this group, or use Alt+Up/Down Arrow. With filters, only the selected task moves; other tasks keep their relative order.",
+  listDropToReorder: "Reorder tasks in this group",
+  viewSaveFailed:
+    "Display settings applied but could not be remembered. Check client storage permissions.",
+  movedToGroup: "Moved “{task}” to “{group}”",
+  moreActions: "More actions",
+  taskOrderSaved: "Saved the order of “{task}”",
   confirmationFailed: "The operation did not complete. Refresh and retry.",
   clearSearch: "Clear search",
   conflictCount: "{count} conflicts",
