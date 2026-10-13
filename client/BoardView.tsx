@@ -57,6 +57,8 @@ import { ConfirmationModal } from "./ConfirmationModal";
 
 type Theme = PluginSurfaceProps["theme"];
 const COLLAPSED_COLUMN_WIDTH = 92;
+const COLUMN_GAP = 10;
+const COLUMN_PADDING = 12;
 type Bounds = { left: number; top: number; width: number; height: number };
 type Gesture = {
   kind: "card" | "group" | "resize";
@@ -181,6 +183,17 @@ export function BoardView(props: Props) {
   const latest = useRef(props);
   latest.current = props;
   const order = groups.map((group) => group.id);
+  const groupWidth = (id: string) =>
+    collapsed.has(id) ? COLLAPSED_COLUMN_WIDTH : columnWidth(widths[id]);
+  // Web onLayout can miss position-only changes after reorder, resize or collapse.
+  let left = COLUMN_PADDING;
+  columns.current = Object.fromEntries(
+    groups.map((group) => {
+      const bounds = { left, right: left + groupWidth(group.id) };
+      left = bounds.right + COLUMN_GAP;
+      return [group.id, bounds];
+    }),
+  );
   const groupSignature = groups
     .map((group) => `${group.id}:${group.kind}:${group.label}`)
     .join("\n");
@@ -770,11 +783,7 @@ export function BoardView(props: Props) {
                   t={t}
                   theme={theme}
                   color={props.groupColor(group)}
-                  width={
-                    isCollapsed
-                      ? COLLAPSED_COLUMN_WIDTH
-                      : columnWidth(widths[group.id])
-                  }
+                  width={groupWidth(group.id)}
                   count={stageCards.length}
                   onListRef={(value) => {
                     listScrollers.current[group.id] = value;
@@ -797,9 +806,6 @@ export function BoardView(props: Props) {
                   moving={preview?.kind === "group" && preview.id === group.id}
                   insertBefore={insertion === group.id}
                   insertAfter={insertion === null && group.id === order.at(-1)}
-                  onLayout={(left, width) => {
-                    columns.current[group.id] = { left, right: left + width };
-                  }}
                   onMenu={() => setMenu(group.id)}
                   onToggleCollapsed={() =>
                     setColumnCollapsed(group.id, !isCollapsed)
@@ -915,6 +921,10 @@ export function BoardView(props: Props) {
               </Text>
             </Pressable>
           </ScrollView>
+        )}
+        {preview && (
+          // Disabled buttons can swallow mouseup; keep a plain release target above them.
+          <View style={StyleSheet.absoluteFill} />
         )}
         {preview && preview.kind !== "resize" && (
           <Animated.View
@@ -1464,7 +1474,6 @@ function BoardColumn({
   t,
   theme,
   children,
-  onLayout,
   onMenu,
   onToggleCollapsed,
   collapseDisabled,
@@ -1491,7 +1500,6 @@ function BoardColumn({
   t: Props["t"];
   theme: Theme;
   children: ReactNode;
-  onLayout(left: number, width: number): void;
   onMenu(): void;
   onToggleCollapsed(): void;
   collapseDisabled: boolean;
@@ -1528,9 +1536,6 @@ function BoardColumn({
     <View
       ref={measured}
       testID={`workboard-column-${group.id}`}
-      onLayout={(event) =>
-        onLayout(event.nativeEvent.layout.x, event.nativeEvent.layout.width)
-      }
       style={[
         styles.column,
         collapsed && styles.columnCollapsed,
@@ -1741,7 +1746,11 @@ const styles = StyleSheet.create({
   boardRoot: { flex: 1, minHeight: 0 },
   viewport: { flex: 1, minHeight: 0, overflow: "hidden" },
   desktopNav: { minHeight: 36, alignItems: "flex-end", paddingRight: 12 },
-  columns: { padding: 12, gap: 10, alignItems: "stretch" },
+  columns: {
+    padding: COLUMN_PADDING,
+    gap: COLUMN_GAP,
+    alignItems: "stretch",
+  },
   column: { borderWidth: 1, borderRadius: 10, padding: 8, gap: 6 },
   columnCollapsed: { alignSelf: "stretch" },
   columnHeader: {

@@ -1253,6 +1253,9 @@ it("F08 submits complete column order, locks only that column and rolls back/ref
 });
 function orderScene(compact = false) {
   const test = columns();
+  test.props.groups = test.props.groups.filter((group: any) =>
+    ["todo", "review"].includes(group.id),
+  );
   test.props.compact = compact;
   test.props.stage = "todo";
   test.props.cards = [card("a"), card("c")];
@@ -1281,7 +1284,6 @@ function orderScene(compact = false) {
         e.type.name === "BoardColumn" &&
         e.props.group.id === "todo",
     );
-    column.props.onLayout(0, 246);
     column.props.onListLayout?.({ top: 20, height: 260 });
     const shells = elements(column).filter(
       (e) => typeof e.type === "function" && e.type.name === "TaskDragShell",
@@ -1298,6 +1300,187 @@ function orderScene(compact = false) {
   }
   return test;
 }
+
+function dragScene(custom: boolean, viewportWidth = 900) {
+  const test = columns();
+  test.props.groups = [
+    runtime.query.data.settings.groups.find((g: any) => g.id === "inbox"),
+    runtime.query.data.settings.groups.find((g: any) => g.id === "todo"),
+    custom
+      ? {
+          id: "custom-review",
+          name: "Custom",
+          kind: "review",
+          label: "task:custom",
+        }
+      : runtime.query.data.settings.groups.find((g: any) => g.id === "review"),
+  ];
+  test.props.cards = [card("moving", "inbox", "workspace")];
+  test.props.fullCards = test.props.cards;
+  const tree = test.view.render();
+  const viewport = find(
+    tree,
+    (e) =>
+      !!e.props.ref &&
+      !!e.props.onLayout &&
+      flattenStyle(e.props.style).overflow === "hidden",
+  );
+  viewport.props.ref.current = {
+    measureInWindow: (fn: any) => fn(0, 0, viewportWidth, 300),
+  };
+  const column = (id: string) =>
+    find(
+      test.view.render(),
+      (e) =>
+        typeof e.type === "function" &&
+        e.type.name === "BoardColumn" &&
+        e.props.group.id === id,
+    );
+  const layout = (id: string, x: number, width: number) => {
+    const element = column(id);
+    const native = mount(
+      element.type,
+      element.props,
+    ).render() as ReactElement<any>;
+    native.props.onLayout?.({ nativeEvent: { layout: { x, width } } });
+  };
+  test.props.groups.forEach((group: any, index: number) => {
+    layout(group.id, 12 + index * 256, 246);
+  });
+  test.props.onReorder.mockImplementation(async (order: string[]) => {
+    test.props.groups = order.map((id) =>
+      test.props.groups.find((group: any) => group.id === id),
+    );
+    // Web onLayout observes size changes, so an equal-width reorder need not emit it.
+    test.view.render();
+    return true;
+  });
+  return { ...test, column, layout };
+}
+
+it.each([false, true])(
+  "drag swaps adjacent groups after a prior reorder (custom=%s)",
+  (custom) => {
+    const test = dragScene(custom);
+    const third = test.props.groups[2].id;
+    const first = test.column("inbox");
+    first.props.onGroupBegin(
+      { left: 12, top: 0, width: 246, height: 300 },
+      100,
+      50,
+    );
+    first.props.onEnd(710, 50);
+    expect(test.props.onReorder).toHaveBeenLastCalledWith(
+      ["todo", third, "inbox"],
+      ["inbox", "todo", third],
+    );
+    test.props.onReorder.mockClear();
+    const adjacent = test.column("todo");
+    adjacent.props.onGroupBegin(
+      { left: 12, top: 0, width: 246, height: 300 },
+      100,
+      50,
+    );
+    adjacent.props.onMove(450, 50);
+    vi.advanceTimersByTime(16);
+    adjacent.props.onEnd(450, 50);
+    expect(test.props.onReorder).toHaveBeenCalledExactlyOnceWith(
+      [third, "todo", "inbox"],
+      ["todo", third, "inbox"],
+    );
+  },
+);
+
+it.each([false, true])(
+  "drag reaches every destination after groups reorder (custom=%s)",
+  (custom) => {
+    const test = dragScene(custom);
+    const third = test.props.groups[2].id;
+    const last = test.column(third);
+    last.props.onGroupBegin(
+      { left: 524, top: 0, width: 246, height: 300 },
+      600,
+      50,
+    );
+    last.props.onEnd(300, 50);
+    expect(test.props.onReorder).toHaveBeenLastCalledWith(
+      ["inbox", third, "todo"],
+      ["inbox", "todo", third],
+    );
+    for (const [destination, x] of [
+      [third, 380],
+      ["todo", 640],
+    ] as const) {
+      test.props.onStage.mockClear();
+      const shell = named(test.view.render(), "TaskDragShell");
+      shell.props.onBegin(
+        { left: 22, top: 80, width: 226, height: 80 },
+        200,
+        100,
+      );
+      shell.props.onMove(x, 100);
+      vi.advanceTimersByTime(16);
+      expect(test.column(destination).props.active).toBe(true);
+      shell.props.onEnd(x, 100);
+      expect(test.props.onStage).toHaveBeenCalledExactlyOnceWith(
+        test.props.cards[0],
+        destination,
+      );
+    }
+  },
+);
+
+it.each(["collapse", "resize", "scroll"])(
+  "drag targets follow %s without sibling layout events",
+  (change) => {
+    const test = dragScene(true, change === "scroll" ? 500 : 900);
+    test.props.cards = [card("moving", "custom-review", "workspace")];
+    test.props.fullCards = test.props.cards;
+    let targetX: number;
+    let sourceLeft: number;
+    if (change === "collapse") {
+      test.column("inbox").props.onToggleCollapsed();
+      test.layout("inbox", 12, 92);
+      targetX = 150;
+      sourceLeft = 380;
+    } else if (change === "resize") {
+      const first = test.column("inbox");
+      first.props.onResizeBegin(
+        { left: 12, top: 0, width: 246, height: 300 },
+        258,
+        100,
+      );
+      first.props.onEnd(492, 100);
+      test.layout("inbox", 12, 480);
+      targetX = 600;
+      sourceLeft = 768;
+    } else {
+      const scroll = find(
+        test.view.render(),
+        (e) => e.props.horizontal === true,
+      );
+      scroll.props.onContentSizeChange(922);
+      scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 256 } } });
+      targetX = 120;
+      sourceLeft = 278;
+    }
+    const shell = named(test.view.render(), "TaskDragShell");
+    shell.props.onBegin(
+      { left: sourceLeft, top: 80, width: 226, height: 80 },
+      sourceLeft + 100,
+      100,
+    );
+    shell.props.onMove(targetX, 100);
+    vi.advanceTimersByTime(16);
+    expect(test.column("todo").props.active).toBe(true);
+    shell.props.onEnd(targetX, 100);
+    expect(test.props.onStage).toHaveBeenCalledExactlyOnceWith(
+      test.props.cards[0],
+      "todo",
+    );
+  },
+);
+
 it("F08 desktop same-column drag uses vertical midpoints and preserves hidden neighbors with the captured CAS", () => {
   const test = orderScene();
   let tree = test.view.render();
@@ -1353,14 +1536,6 @@ it("F08 cancels a same-column gesture when filters change", () => {
 it("F08 stale cross-column drag refuses an archived mover instead of touching stage", () => {
   const test = orderScene();
   const tree = test.view.render();
-  const review = find(
-    tree,
-    (e) =>
-      typeof e.type === "function" &&
-      e.type.name === "BoardColumn" &&
-      e.props.group.id === "review",
-  );
-  review.props.onLayout(260, 220);
   const shell = find(
     tree,
     (e) =>
