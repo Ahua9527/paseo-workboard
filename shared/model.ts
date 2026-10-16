@@ -136,6 +136,7 @@ export const groupOrderSchema = z
   });
 const preferences = {
   autoArchive: z.boolean().default(false),
+  autoAdvance: z.boolean().default(false),
   archiveMappingNeedsReview: z.boolean().default(false),
   archiveAfterDays: z.number().int().min(1).max(365).default(30),
   defaultDraftGroup: stageSchema.nullable().default(null),

@@ -2360,6 +2360,16 @@ export function SettingsPage({
                 testID="workboard-pin-in-progress"
               />
               <SettingsSwitch
+                label={t.autoAdvance}
+                hint={t.autoAdvanceHint}
+                value={settings.autoAdvance}
+                onValueChange={async (value) => {
+                  await persist({ ...settings, autoAdvance: value }, "advance");
+                }}
+                disabled={controlDisabled("advance")}
+                testID="workboard-auto-advance"
+              />
+              <SettingsSwitch
                 label={t.autoArchive}
                 hint={[
                   t.autoArchiveHint.replace(
