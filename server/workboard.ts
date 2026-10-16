@@ -19,6 +19,7 @@ import {
   settingsSchema,
   statusLabels,
   STAGE_COLORS,
+  STAGES,
   type Board,
   type Card,
   type Data,
@@ -28,6 +29,7 @@ import {
   type ConversationReason,
   type Settings,
   type Stage,
+  type StageKind,
   type Task,
 } from "../shared/model";
 import { CANCEL_BINDING_BUSY_ERROR_CODE, type Mutation } from "../shared/rpc";
@@ -111,6 +113,7 @@ export class Workboard {
   private workspaceEpochs = new Map<string, number>();
   private bindingInFlight = new Set<string>();
   private queuedStarts = new Map<string, number>();
+  private advanceFacts = new Map<string, StageKind>();
   private archiveDeferrals = new Map<
     string,
     {
@@ -433,11 +436,87 @@ export class Workboard {
         }
       }
     });
+    await this.advanceStatuses(scope, connection);
     if (connection !== this.connectionGeneration)
       throw new Error(this.error ?? "Paseo disconnected during refresh");
     this.connected = true;
     this.error = null;
     this.refreshedAt = this.stamp();
+  }
+  /** Called inside reconciliation's serial operation; never queues another mutation. */
+  private async advanceStatuses(
+    scope: ReadonlySet<string> | undefined,
+    connection: number,
+  ): Promise<void> {
+    if (this.stopped || this.pendingMutations > 0) return;
+    const { autoAdvance, groups } = this.store.current.settings;
+    if (!autoAdvance) return;
+    const check = () => {
+      if (this.stopped || connection !== this.connectionGeneration)
+        throw new Error(this.error ?? "Paseo disconnected during refresh");
+    };
+    for (const task of this.store.current.tasks) {
+      if (
+        !task.workspaceId ||
+        (scope && !scope.has(task.workspaceId)) ||
+        task.binding ||
+        task.archived ||
+        [
+          "labels-conflict",
+          "label-sync-incomplete",
+          "native-archive-unknown",
+          "archive-restored-workspace-unavailable",
+        ].includes(task.issue ?? "")
+      )
+        continue;
+      const workspace = this.inventory.workspaces.find(
+        (workspace) => workspace.id === task.workspaceId,
+      );
+      if (!workspace) continue;
+      const currentKind = groupKind(task.lastStage, groups);
+      if (!currentKind || currentKind === "canceled") continue;
+      const request = projectChangeRequest(workspace);
+      const fact =
+        request?.state === "merged"
+          ? "done"
+          : request?.state === "open"
+            ? "review"
+            : this.inventory.agents.some(
+                  (agent) => agent.workspaceId === workspace.id,
+                )
+              ? "in-progress"
+              : null;
+      const target = orderedGroups(this.store.current.settings).find(
+        (group) => group.kind === fact,
+      );
+      if (fact === null || !target) continue;
+      if (this.advanceFacts.get(task.id) === fact) continue;
+      if (STAGES.indexOf(fact) > STAGES.indexOf(currentKind)) {
+        if (this.stopped || this.pendingMutations > 0) return;
+        let moved: Workspace;
+        try {
+          moved = await this.transition(
+            workspace.id,
+            target.id,
+            statusLabels(workspace.labels, groups),
+            check,
+          );
+        } catch {
+          // Keep the fact unseen so a concurrent label edit can be retried next round.
+          continue;
+        }
+        this.inventory.workspaces = this.inventory.workspaces.map(
+          (workspace) => (workspace.id === moved.id ? moved : workspace),
+        );
+        await this.store.update((data) => {
+          const current = data.tasks.find((current) => current.id === task.id)!;
+          current.lastStage = target.id;
+          current.updatedAt = this.stamp(current.updatedAt);
+        });
+        this.changed(moved.id);
+      }
+      this.advanceFacts.set(task.id, fact);
+    }
   }
   /**
    * Combine every agent's evidence into one display time and one archive gate. Only a full
@@ -794,6 +873,8 @@ export class Workboard {
       for (const group of removed) delete data.cardOrderByStage[group.id];
       data.settings = next;
     });
+    if (!previous.settings.autoAdvance && next.autoAdvance)
+      this.advanceFacts.clear();
   }
   private checkCardOrder(
     data: Data,

@@ -169,6 +169,9 @@ const zh = {
   archiveDraftConfirm:
     "归档草稿“{name}”？归档后将移出看板，可在归档页放回原分组。",
   autoArchive: "自动归档",
+  autoAdvance: "自动推进状态",
+  autoAdvanceHint:
+    "workspace 里有过 Agent（包括已归档的）就到“进行中”，非草稿 PR 打开就到“待验收”，PR 合并就到“已完成”；只往前挪，不动“已废弃”的卡。",
   autoArchiveMigrationPaused:
     "升级时补建了已废弃分组，其标签可能匹配已有 workspace。自动归档已关闭，请核对到期任务后重新开启；存在到期任务时会先要求确认。",
   archiveAfterDays: "自动归档等待天数",
@@ -583,6 +586,9 @@ const en: typeof zh = {
   archiveDraftConfirm:
     "Archive draft “{name}”? It will leave the board. You can restore it to its original group from Archive.",
   autoArchive: "Automatic archive",
+  autoAdvance: "Automatic status advancement",
+  autoAdvanceHint:
+    "Moves a card to In progress once its workspace has had an agent (including archived ones), to Review when a non-draft PR opens, and to Done when it merges; only moves forward and leaves Canceled cards unchanged.",
   autoArchiveMigrationPaused:
     "An upgrade added a Canceled group whose label may match existing workspaces. Automatic archive was turned off. Review due tasks before re-enabling it; due tasks require confirmation first.",
   archiveAfterDays: "Days before automatic archive",
