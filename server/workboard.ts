@@ -113,7 +113,7 @@ export class Workboard {
   private workspaceEpochs = new Map<string, number>();
   private bindingInFlight = new Set<string>();
   private queuedStarts = new Map<string, number>();
-  private advanceFacts = new Map<string, StageKind | null>();
+  private advanceFacts = new Map<string, StageKind>();
   private archiveDeferrals = new Map<
     string,
     {
@@ -448,6 +448,7 @@ export class Workboard {
     scope: ReadonlySet<string> | undefined,
     connection: number,
   ): Promise<void> {
+    if (this.stopped || this.pendingMutations > 0) return;
     const { autoAdvance, groups } = this.store.current.settings;
     if (!autoAdvance) return;
     const check = () => {
@@ -485,35 +486,34 @@ export class Workboard {
                 )
               ? "in-progress"
               : null;
+      const target = orderedGroups(this.store.current.settings).find(
+        (group) => group.kind === fact,
+      );
+      if (fact === null || !target) continue;
       if (this.advanceFacts.get(task.id) === fact) continue;
-      const target = groups.find((group) => group.kind === fact);
-      if (
-        fact &&
-        target &&
-        STAGES.indexOf(fact) > STAGES.indexOf(currentKind)
-      ) {
+      if (STAGES.indexOf(fact) > STAGES.indexOf(currentKind)) {
+        if (this.stopped || this.pendingMutations > 0) return;
+        let moved: Workspace;
         try {
-          const moved = await this.transition(
+          moved = await this.transition(
             workspace.id,
             target.id,
             statusLabels(workspace.labels, groups),
             check,
           );
-          this.inventory.workspaces = this.inventory.workspaces.map(
-            (workspace) => (workspace.id === moved.id ? moved : workspace),
-          );
-          await this.store.update((data) => {
-            const current = data.tasks.find(
-              (current) => current.id === task.id,
-            )!;
-            current.lastStage = target.id;
-            current.updatedAt = this.stamp(current.updatedAt);
-          });
-          this.changed(moved.id);
         } catch {
           // Keep the fact unseen so a concurrent label edit can be retried next round.
           continue;
         }
+        this.inventory.workspaces = this.inventory.workspaces.map(
+          (workspace) => (workspace.id === moved.id ? moved : workspace),
+        );
+        await this.store.update((data) => {
+          const current = data.tasks.find((current) => current.id === task.id)!;
+          current.lastStage = target.id;
+          current.updatedAt = this.stamp(current.updatedAt);
+        });
+        this.changed(moved.id);
       }
       this.advanceFacts.set(task.id, fact);
     }
