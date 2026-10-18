@@ -32,6 +32,7 @@ import {
   type StageKind,
   type Task,
 } from "../shared/model";
+import { checkSchema } from "../shared/github";
 import { CANCEL_BINDING_BUSY_ERROR_CODE, type Mutation } from "../shared/rpc";
 import type {
   Agent,
@@ -93,6 +94,23 @@ function projectChangeRequest(workspace?: Workspace): Card["changeRequest"] {
     title: request.title,
     state,
     checksStatus: request.checksStatus ?? null,
+    ...(request.checks === undefined
+      ? {}
+      : {
+          checks: request.checks.map((check) => ({
+            name: check.name,
+            status: checkSchema.shape.status
+              .catch("pending")
+              .parse(check.status),
+            url: check.url ?? null,
+            ...(check.workflow === undefined
+              ? {}
+              : { workflow: check.workflow }),
+            ...(check.duration === undefined
+              ? {}
+              : { duration: check.duration }),
+          })),
+        }),
     reviewDecision: request.reviewDecision ?? null,
   };
 }
