@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
@@ -66,8 +72,9 @@ import { QuickCreate } from "./QuickCreate";
 import { HintButton, HintProvider } from "./Hint";
 import { usePaseoLanguage } from "./paseo-language";
 import { ConfirmationModal } from "./ConfirmationModal";
+import { failingPrCount, GitHubPage, useGithubInbox } from "./GitHubPage";
 
-type Page = "board" | "archive" | "settings";
+type Page = "board" | "archive" | "settings" | "github";
 type DraftForm = {
   task?: Card;
   title: string;
@@ -156,6 +163,7 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
     refetchInterval: 1_500,
   });
   const serverBoard = boardQuery.data;
+  const github = useGithubInbox(props.host.id);
   const language = usePaseoLanguage();
   const t = strings(language);
   const updateViewPreferences = (patch: Partial<ViewPreferences>) => {
@@ -310,6 +318,7 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
   const allCards = visibleCards(board, "all", "", false);
   const conflicts = cards.filter((card) => card.stage === "conflict");
   const archived = board.cards.filter((card) => card.archived !== null);
+  const failingPrs = failingPrCount(github.query.data);
   const writesDisabled = !board.connected || boardQuery.isError;
   const groupsPending = pendingMutationIds.has("settings:groups");
   const draftPending = pendingMutationIds.has(
@@ -327,6 +336,32 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
         disabled={writesDisabled}
         mutate={mutate}
         onBack={() => setPage("board")}
+      />
+    );
+  if (page === "github")
+    return (
+      <GitHubPage
+        board={board}
+        t={t}
+        theme={props.theme}
+        layout={props.layout}
+        disabled={writesDisabled}
+        inbox={github.query}
+        pendingMutationIds={pendingMutationIds}
+        refresh={github.refresh}
+        onBack={() => setPage("board")}
+        onConvert={async (item) => {
+          const next = await mutate(
+            {
+              action: "create",
+              title: item.title,
+              description: item.url,
+              projectId: item.projectId,
+            },
+            `github:${item.url}`,
+          );
+          if (next) notifyTaskSaved(next);
+        }}
       />
     );
   if (page === "settings")
@@ -736,6 +771,48 @@ function HostWorkboard(props: PluginSurfaceProps & { initialPage?: Page }) {
               </Text>
             )}
           </HintButton>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              failingPrs
+                ? `${t.github} · ${t.githubFailing.replace("{count}", String(failingPrs))}`
+                : t.github
+            }
+            onPress={() => setPage("github")}
+            style={({ pressed }) => [
+              styles.toolbarButton,
+              pressed && { backgroundColor: props.theme.colors.surface2 },
+            ]}
+          >
+            <Icon
+              name="GitPullRequest"
+              size={16}
+              color={props.theme.colors.foregroundMuted}
+            />
+            {!props.layout.compact && (
+              <Text
+                style={[
+                  styles.controlText,
+                  { color: props.theme.colors.foregroundMuted },
+                ]}
+              >
+                {t.github}
+              </Text>
+            )}
+            {failingPrs > 0 && (
+              <View
+                testID="workboard-github-failing"
+                style={[
+                  styles.filterBadge,
+                  { backgroundColor: props.theme.colors.statusDanger },
+                ]}
+              >
+                <Text style={[styles.cardMeta, { color: "#fff" }]}>
+                  {failingPrs}
+                </Text>
+              </View>
+            )}
+          </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`${t.archive} (${archived.length})`}
@@ -2104,16 +2181,18 @@ function StageModal({
     </Modal>
   );
 }
-function PageHeader({
+export function PageHeader({
   title,
   t,
   theme,
   onBack,
+  children,
 }: {
   title: string;
   t: ReturnType<typeof strings>;
   theme: PluginSurfaceProps["theme"];
   onBack?(): void;
+  children?: ReactNode;
 }) {
   return (
     <View style={[styles.pageHeader, { borderColor: theme.colors.border }]}>
@@ -2144,6 +2223,7 @@ function PageHeader({
       <Text style={[styles.heading, { color: theme.colors.foreground }]}>
         {title}
       </Text>
+      {children}
     </View>
   );
 }
