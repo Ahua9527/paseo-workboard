@@ -7,11 +7,12 @@ import {
   UNSUPPORTED_STORAGE_VERSION_ERROR_CODE,
   UnsupportedStorageVersionError,
 } from "./shared/migrations";
-import { mutateRpc, snapshotRpc } from "./shared/rpc";
+import { githubRpc, mutateRpc, snapshotRpc } from "./shared/rpc";
 import { PaseoCompat } from "./server/paseo-compat";
 import { PaseoHost } from "./server/host";
 import { Store } from "./server/store";
 import { Workboard } from "./server/workboard";
+import { GitHubInbox } from "./server/github";
 
 export function classifyBootFailure(failure: unknown): {
   deterministic: boolean;
@@ -27,6 +28,7 @@ export function classifyBootFailure(failure: unknown): {
 }
 
 export default function contribute(server: PluginServerContext) {
+  const inbox = new GitHubInbox();
   const compat = new PaseoCompat();
   const bootstrap = compat.installBootstrap(server);
   const settings = server.registerSettings(
@@ -105,6 +107,10 @@ export default function contribute(server: PluginServerContext) {
         }, 10000);
     }
   };
+  server.handle(githubRpc, (input) => {
+    if (!board) throw new Error(error);
+    return inbox.read(board.snapshot().projects, input.refresh);
+  });
   server.handle(snapshotRpc, () => {
     if (!board) throw new Error(error);
     return board.snapshot();
