@@ -13,6 +13,7 @@ import { attentionReasons, shortDate } from "./board-utils";
 import { strings } from "./strings";
 import { groupColor, supplementalColor } from "./colors";
 import { HintButton } from "./Hint";
+import { ChecksList } from "./ChecksList";
 
 function CardAction({
   theme,
@@ -77,6 +78,7 @@ export function TaskItem({
   presentation?: "card" | "row";
 }) {
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const [checksOpen, setChecksOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [titleHovered, setTitleHovered] = useState(false);
   const toast = useToast();
@@ -118,6 +120,13 @@ export function TaskItem({
     return issueText(reason, t) ?? reason;
   });
   const pinHint = card.pinState === "automatic" ? t.pinAutomatic : t.pinManual;
+  const checksExpandable = !!request?.checks?.length;
+  const checksLabel =
+    request?.checksStatus && request.checksStatus !== "none"
+      ? checksExpandable
+        ? `${t.checks[request.checksStatus]} · ${checksOpen ? t.hideChecks : t.showChecks}`
+        : t.checks[request.checksStatus]
+      : "";
   const requestSummary = (
     <>
       {request && (
@@ -147,9 +156,18 @@ export function TaskItem({
           <View style={styles.requestStatuses}>
             {request.checksStatus && request.checksStatus !== "none" && (
               <HintButton
-                hint={t.checks[request.checksStatus]}
+                hint={checksLabel}
                 accessibilityRole="button"
-                accessibilityLabel={t.checks[request.checksStatus]}
+                accessibilityLabel={checksLabel}
+                accessibilityState={
+                  checksExpandable ? { expanded: checksOpen } : undefined
+                }
+                aria-expanded={checksExpandable ? checksOpen : undefined}
+                onPress={
+                  checksExpandable
+                    ? () => setChecksOpen((value) => !value)
+                    : undefined
+                }
                 style={styles.requestStatusAction}
               >
                 <Icon
@@ -175,6 +193,9 @@ export function TaskItem({
             )}
           </View>
         </View>
+      )}
+      {checksOpen && !!request?.checks?.length && (
+        <ChecksList checks={request.checks} t={t} theme={theme} />
       )}
     </>
   );
@@ -878,7 +899,7 @@ function changeRequestColor(
         ? theme.colors.statusSuccess
         : theme.colors.foregroundMuted;
 }
-function checksIcon(
+export function checksIcon(
   status: Exclude<NonNullable<Card["changeRequest"]>["checksStatus"], "none">,
 ) {
   return status === "success"
@@ -887,7 +908,7 @@ function checksIcon(
       ? "CircleX"
       : "CircleDot";
 }
-function checksColor(
+export function checksColor(
   status: Exclude<NonNullable<Card["changeRequest"]>["checksStatus"], "none">,
   theme: PluginSurfaceProps["theme"],
 ) {
@@ -897,7 +918,7 @@ function checksColor(
       ? theme.colors.statusDanger
       : theme.colors.statusWarning;
 }
-function reviewIcon(
+export function reviewIcon(
   status: NonNullable<Card["changeRequest"]>["reviewDecision"],
 ) {
   return status === "approved"
@@ -906,7 +927,7 @@ function reviewIcon(
       ? "CircleX"
       : "MessageSquare";
 }
-function reviewColor(
+export function reviewColor(
   status: NonNullable<Card["changeRequest"]>["reviewDecision"],
   theme: PluginSurfaceProps["theme"],
 ) {

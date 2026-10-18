@@ -78,7 +78,8 @@ vi.mock("react", async (original) => {
   };
 });
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => runtime.query,
+  useQuery: (options: { queryKey: unknown[] }) =>
+    options.queryKey[0] === "workboard-github" ? {} : runtime.query,
   useQueryClient: () => runtime.cache,
 }));
 vi.mock("@getpaseo/plugin/client", () => ({ useRpc: () => runtime.mutation }));
