@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { checkSchema } from "./github";
 
 export const STAGES = [
   "inbox",
@@ -448,6 +449,7 @@ export const cardSchema = taskSchema.extend({
       reviewDecision: z
         .enum(["approved", "changes_requested", "pending"])
         .nullable(),
+      checks: z.array(checkSchema).optional(),
     })
     .nullable(),
   changeRequestUnavailable: z.boolean(),

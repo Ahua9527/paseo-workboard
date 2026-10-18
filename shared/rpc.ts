@@ -9,11 +9,17 @@ import {
   stageSchema,
   startSchema,
 } from "./model";
+import { githubInboxSchema } from "./github";
 
 export const snapshotRpc = defineRpc({
   name: "workboard.snapshot",
   input: z.object({}),
   output: boardSchema,
+});
+export const githubRpc = defineRpc({
+  name: "workboard.github",
+  input: z.object({ refresh: z.boolean().default(false) }),
+  output: githubInboxSchema,
 });
 export const CANCEL_BINDING_BUSY_ERROR_CODE = "cancel-binding-busy";
 export const mutationSchema = z.discriminatedUnion("action", [
